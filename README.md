@@ -83,4 +83,4 @@ tests/            no-lookahead, sizing, cost and metric tests
 
 ## Author
 
-Darya Terani, Statistics and Economics, UC Davis. Extends the GARCH modeling from my financial econometrics coursework into an out-of-sample trading test.
+Darya Terani, B.S. Applied Statistics and B.A. Economics, UC Davis. Extends the GARCH modeling from my financial econometrics coursework into an out-of-sample trading test.
