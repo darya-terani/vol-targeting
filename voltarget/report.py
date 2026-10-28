@@ -20,9 +20,34 @@ from .backtest import BacktestConfig, buy_and_hold, run
 from .data import load_prices, log_returns, simple_returns
 from .forecasters import all_forecasts
 
-LABELS = {"rolling": "Rolling 21-day", "ewma": "EWMA (λ=0.94)", "garch": "GARCH(1,1)", "har": "HAR"}
+LABELS = {
+    "rolling": "Rolling 21-day",
+    "ewma": "EWMA (λ=0.94)",
+    "garch": "GARCH(1,1)",
+    "har": "HAR",
+    "lstm": "LSTM",
+    "lstm_anchored": "LSTM (EWMA-anchored)",
+}
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
-BLUE, ORANGE = "#2a78d6", "#eb6834"   # categorical slots 1 and 2
+BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"   # categorical slots 1-3
+
+
+def chart_2008(forecasts: pd.DataFrame, lr: pd.Series, out: Path) -> None:
+    """The plain LSTM's failure in the 2008 crash, next to GARCH and the fix."""
+    window = slice("2008-07-01", "2009-06-30")
+    realized = (lr.rolling(21).std() * (252**0.5) * 100).loc[window]
+    fig, ax = plt.subplots(figsize=(9, 4), facecolor=SURFACE)
+    ax.plot(realized.index, realized, color=MUTED, linewidth=1, linestyle="--", label="Realized (past 21 days)")
+    series = [("garch", BLUE), ("lstm", ORANGE), ("lstm_anchored", AQUA)]
+    for col, color in series:
+        f = (forecasts[col] * (252**0.5) * 100).loc[window]
+        ax.plot(f.index, f, color=color, linewidth=2, label=LABELS[col])
+    _style(ax, "2008: the plain LSTM could not forecast volatility it had never seen",
+           "Forecast volatility (% annualized)")
+    ax.legend(frameon=False, fontsize=9, loc="upper right")
+    fig.tight_layout()
+    fig.savefig(out / "lstm_2008.png", dpi=160)
+    plt.close(fig)
 
 
 def _style(ax, title: str, ylabel: str) -> None:
@@ -113,11 +138,18 @@ def main(path: str, out_dir: str = "results") -> None:
     idx = forecasts.index
 
     # 1. Forecast accuracy
-    acc = pd.DataFrame(
-        {LABELS[c]: {"QLIKE (lower is better)": M.qlike(forecasts[c], lr.loc[idx]),
-                     "MSE of variance (×1e-7)": M.mse_var(forecasts[c], lr.loc[idx]) * 1e7}
-         for c in forecasts}
-    ).T
+    r_eval = lr.loc[idx]
+    acc_rows = {}
+    for c in forecasts:
+        row = {"QLIKE (lower is better)": f"{M.qlike(forecasts[c], r_eval):.4f}",
+               "MSE of variance (×1e-7)": f"{M.mse_var(forecasts[c], r_eval) * 1e7:.4f}"}
+        if c == "garch":
+            row["vs GARCH: DM t-stat (p)"] = "–"
+        else:
+            t, p = M.diebold_mariano(forecasts[c], forecasts["garch"], r_eval)
+            row["vs GARCH: DM t-stat (p)"] = f"{t:+.2f} ({p:.3f})"
+        acc_rows[LABELS[c]] = row
+    acc = pd.DataFrame(acc_rows).T
 
     # 2. Strategies
     returns, summ = {}, {}
@@ -144,6 +176,7 @@ def main(path: str, out_dir: str = "results") -> None:
     )
 
     charts(bh, returns[LABELS["garch"]], "GARCH", cfg, out)
+    chart_2008(forecasts, lr, out)
 
     pct = {"CAGR", "Volatility", "Max drawdown", "Worst day", "Vol of rolling vol", "% days leveraged"}
     crisis = M.crisis_table(returns)
@@ -153,7 +186,10 @@ def main(path: str, out_dir: str = "results") -> None:
         f"trading cost {cfg.cost_bps:g} bps, cash rate {cfg.cash_rate:.0%}, borrowing rate {cfg.borrow_rate:.0%}, "
         "Sharpe against a 0% risk-free rate.\n",
         "## Forecast accuracy\n",
-        acc.round(4).to_markdown(),
+        acc.to_markdown(),
+        "\nDiebold-Mariano test on daily QLIKE loss differences with Newey-West standard errors. "
+        "Negative t means the model's loss is lower than GARCH's.\n",
+        "![LSTM in 2008](lstm_2008.png)\n",
         "\n## Strategy performance\n",
         _fmt_table(summary_df, pct),
         "\n## Crisis windows (total return over each window)\n",

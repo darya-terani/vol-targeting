@@ -111,7 +111,24 @@ def har_vol(r: pd.Series, refit_every: int = REFIT_EVERY, min_train: int = MIN_T
     return pd.Series(np.sqrt(var), index=r.index, name="har")
 
 
-FORECASTERS = {"rolling": rolling_vol, "ewma": ewma_vol, "garch": garch_vol, "har": har_vol}
+def _lstm(r: pd.Series) -> pd.Series:
+    from .neural import lstm_vol
+    return lstm_vol(r)
+
+
+def _lstm_anchored(r: pd.Series) -> pd.Series:
+    from .neural import lstm_anchored_vol
+    return lstm_anchored_vol(r)
+
+
+FORECASTERS = {
+    "rolling": rolling_vol,
+    "ewma": ewma_vol,
+    "garch": garch_vol,
+    "har": har_vol,
+    "lstm": _lstm,
+    "lstm_anchored": _lstm_anchored,
+}
 
 
 def all_forecasts(r: pd.Series) -> pd.DataFrame:

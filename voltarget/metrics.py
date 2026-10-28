@@ -84,6 +84,31 @@ def mse_var(forecast_vol: pd.Series, ret: pd.Series) -> float:
     return float(((df["r2"] - df["s2"]) ** 2).mean())
 
 
+def diebold_mariano(f_a: pd.Series, f_b: pd.Series, ret: pd.Series, lags: int | None = None) -> tuple[float, float]:
+    """Diebold-Mariano test: is forecaster A's QLIKE loss lower than B's by more
+    than chance?
+
+    d[t] = loss_A[t] - loss_B[t]. If the forecasters were equally good, d would
+    average zero. Daily losses are autocorrelated (volatility clusters), so the
+    standard error uses a Newey-West estimate rather than assuming independence.
+    Returns (t-statistic, two-sided p-value); negative t means A is better.
+    """
+    from math import erf, sqrt
+
+    df = pd.DataFrame({"a": f_a**2, "b": f_b**2, "r2": ret**2}).dropna()
+    loss = lambda s2: np.log(s2) + df["r2"] / s2  # noqa: E731
+    d = (loss(df["a"]) - loss(df["b"])).to_numpy()
+    T = len(d)
+    lags = lags if lags is not None else int(4 * (T / 100) ** (2 / 9))
+    u = d - d.mean()
+    lrv = u @ u / T
+    for k in range(1, lags + 1):
+        lrv += 2 * (1 - k / (lags + 1)) * (u[k:] @ u[:-k]) / T   # Bartlett weights
+    t = d.mean() / np.sqrt(lrv / T)
+    p = 2 * (1 - 0.5 * (1 + erf(abs(t) / sqrt(2))))
+    return float(t), float(p)
+
+
 # ---- uncertainty ------------------------------------------------------------
 
 def block_bootstrap_sharpe_diff(

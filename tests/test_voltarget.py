@@ -29,6 +29,54 @@ def test_no_lookahead(returns, fn):
     assert not np.allclose(before.iloc[t + 1 : t + 30].dropna(), after.iloc[t + 1 : t + 30].dropna())
 
 
+@pytest.mark.parametrize("anchored", [False, True])
+def test_lstm_no_lookahead(returns, anchored):
+    """Same check for both neural models. Short training keeps the test fast;
+    the lookahead property doesn't depend on how long the network trains."""
+    from voltarget.neural import lstm_vol
+
+    t = 800
+    shocked = returns.copy()
+    shocked.iloc[t] = 0.25
+    kw = dict(refit_every=252, min_train=500, max_epochs=3, anchored=anchored)
+    before, after = lstm_vol(returns, **kw), lstm_vol(shocked, **kw)
+    pd.testing.assert_series_equal(before.iloc[: t + 1], after.iloc[: t + 1])
+
+
+def test_anchored_lstm_starts_at_ewma_before_training(returns):
+    """With zero training epochs the correction is zero, so the anchored
+    model must reproduce the EWMA forecast exactly. This confirms the anchor
+    is wired in the way the docstring claims."""
+    from voltarget.neural import lstm_vol
+
+    with torch_zero_init():
+        v = lstm_vol(returns, refit_every=252, min_train=500, max_epochs=0, anchored=True)
+    e = ewma_vol(returns)
+    np.testing.assert_allclose(v.iloc[500:].to_numpy(), e.iloc[500:].to_numpy(), rtol=1e-5)
+
+
+class torch_zero_init:
+    """Zero the network's output weights so an untrained net outputs exactly its bias (0)."""
+
+    def __enter__(self):
+        import torch
+
+        self._orig = torch.nn.Linear.reset_parameters
+
+        def zero(layer):
+            torch.nn.init.zeros_(layer.weight)
+            if layer.bias is not None:
+                torch.nn.init.zeros_(layer.bias)
+
+        torch.nn.Linear.reset_parameters = zero
+        return self
+
+    def __exit__(self, *exc):
+        import torch
+
+        torch.nn.Linear.reset_parameters = self._orig
+
+
 def test_ewma_matches_hand_calculation():
     r = pd.Series([0.01, -0.02, 0.03])
     v = ewma_vol(r, lam=0.9)
